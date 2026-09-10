@@ -151,6 +151,12 @@ def main():
                         help="simulated transient failure probability (0 disables)")
     parser.add_argument("--report-every", type=int, default=20,
                         help="print the full aggregation table every N orders")
+    parser.add_argument("--max-records", type=int, default=0,
+                        help="exit cleanly after this many records are settled "
+                             "(0 = run until Ctrl+C); handy for scripted runs")
+    parser.add_argument("--idle-timeout", type=float, default=0.0,
+                        help="exit after this many seconds with no new records "
+                             "(0 = wait forever)")
     args = parser.parse_args()
 
     signal.signal(signal.SIGINT, _stop)
@@ -181,11 +187,34 @@ def main():
           f"transient-rate={args.transient_rate}")
     print("[consumer] waiting for messages (Ctrl+C to stop)...\n")
 
+    def to_dlq(msg, order, error, attempts):
+        """Dead-letter a record. Returns False if the DLQ write itself failed.
+
+        A failed DLQ write is the one case where we must not commit: the record
+        would be lost entirely. We stop instead, leaving the offset uncommitted
+        so the record is redelivered when the consumer restarts.
+        """
+        try:
+            dlq.send(msg, order, error, attempts)
+            return True
+        except Exception as dlq_exc:
+            print(f"[consumer] FATAL: could not write to DLQ: {dlq_exc}")
+            print("[consumer] offset NOT committed - record will be redelivered "
+                  "on restart. Stopping.")
+            return False
+
     try:
+        settled = 0
+        last_record_at = time.monotonic()
         while _running:
             msg = consumer.poll(1.0)
             if msg is None:
+                if (args.idle_timeout
+                        and time.monotonic() - last_record_at > args.idle_timeout):
+                    print(f"[consumer] idle for {args.idle_timeout:.0f}s, stopping.")
+                    break
                 continue
+            last_record_at = time.monotonic()
             if msg.error():
                 if msg.error().code() == KafkaError._PARTITION_EOF:
                     continue
@@ -237,12 +266,19 @@ def main():
                     print(agg.report(), "\n")
 
             except PermanentError as exc:
-                dlq.send(msg, order, exc, max(attempts, 1))
+                if not to_dlq(msg, order, exc, max(attempts, 1)):
+                    break
             except Exception as exc:  # never let one bad record kill the loop
-                dlq.send(msg, order, exc, max(attempts, 1))
+                if not to_dlq(msg, order, exc, max(attempts, 1)):
+                    break
 
             # 5. Only now is it safe to advance the offset.
             consumer.commit(message=msg, asynchronous=False)
+
+            settled += 1
+            if args.max_records and settled >= args.max_records:
+                print(f"[consumer] settled {settled} records, stopping.")
+                break
     finally:
         print("\n[consumer] === final aggregation ===")
         print(agg.report())

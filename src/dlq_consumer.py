@@ -12,6 +12,7 @@ Run it in a third terminal during the demo:
 import argparse
 import signal
 import sys
+import time
 from collections import Counter
 from datetime import datetime
 
@@ -39,6 +40,9 @@ def main():
                         help="consumer group id")
     parser.add_argument("--show-payload", action="store_true",
                         help="also print the raw bytes of the original record")
+    parser.add_argument("--idle-timeout", type=float, default=0.0,
+                        help="exit after this many seconds with no new dead "
+                             "letters (0 = wait forever); handy for scripted runs")
     args = parser.parse_args()
 
     signal.signal(signal.SIGINT, _stop)
@@ -60,11 +64,17 @@ def main():
     total = 0
     print(f"[dlq] watching {config.DLQ_TOPIC} (Ctrl+C to stop)...\n")
 
+    last_record_at = time.monotonic()
     try:
         while _running:
             msg = consumer.poll(1.0)
             if msg is None:
+                if (args.idle_timeout
+                        and time.monotonic() - last_record_at > args.idle_timeout):
+                    print(f"[dlq] idle for {args.idle_timeout:.0f}s, stopping.")
+                    break
                 continue
+            last_record_at = time.monotonic()
             if msg.error():
                 if msg.error().code() != KafkaError._PARTITION_EOF:
                     print(f"[dlq] kafka error: {msg.error()}")

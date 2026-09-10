@@ -177,7 +177,25 @@ docker compose down -v
 | `--max-attempts` | attempts before dead-lettering (default 4) |
 | `--transient-rate` | simulated transient failure probability (`0` disables) |
 | `--report-every` | print the full aggregation table every N orders |
+| `--max-records` | exit cleanly after N records are settled (`0` = until Ctrl+C) |
+| `--idle-timeout` | exit after N seconds with no new records (`0` = wait forever) |
 | `--group` | consumer group id — run two consumers in the same group to show partition rebalancing |
+
+**DLQ inspector**
+
+| Flag | Meaning |
+|---|---|
+| `--from-beginning` | read every dead letter ever written |
+| `--show-payload` | also print the raw bytes of the original record |
+| `--idle-timeout` | exit after N seconds with no new dead letters |
+| `--group` | consumer group id |
+
+> The DLQ inspector commits its offsets, so a second run in the same group shows
+> only *new* dead letters. Pass a fresh `--group` name to re-read the topic from
+> the start.
+
+> When redirecting output to a file, run with `python -u` — otherwise Python
+> buffers stdout and the log stays empty until the process exits.
 
 ---
 
@@ -236,6 +254,28 @@ ALL          52     249.61      5.12    499.88     12979.72
 
 Kafka UI at <http://localhost:8080> shows the topics, the registered schemas and
 the messages — useful to display during the live demo.
+
+### A verified run
+
+Producing 45 orders with `--poison-rate 0.12 --corrupt-rate 0.07`:
+
+```
+[producer] done: sent=45 good=32 poison=5 corrupt=8
+[consumer] processed=31 retries=11 dead_lettered=14
+[dlq]      total dead letters seen: 14
+```
+
+`31 processed + 14 dead-lettered = 45 produced` — nothing lost, nothing
+duplicated. The 14 dead letters covered every failure path:
+
+* 8 × `Avro deserialization failed` (the corrupt, non-Avro bytes)
+* 3 × `price must be positive` (poison)
+* 2 × `product name is empty` (poison)
+* 1 × `still failing after 4 attempts` (a *good* order whose transient failures
+  never cleared — the retry budget was exhausted)
+
+The other 10 retried orders recovered on a later attempt and were aggregated
+normally, which is exactly the distinction the design is built around.
 
 ---
 
