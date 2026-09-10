@@ -1,0 +1,20 @@
+{
+  "type": "record",
+  "name": "DeadLetter",
+  "namespace": "com.bigdata.assignment3",
+  "doc": "Envelope written to the Dead Letter Queue when an order can never be processed successfully.",
+  "fields": [
+    {"name": "orderId",       "type": ["null", "string"], "default": null,
+     "doc": "Order id when the payload could be decoded, null for undecodable bytes."},
+    {"name": "payload",       "type": "bytes",
+     "doc": "Raw value bytes of the original Kafka record, kept verbatim for replay."},
+    {"name": "errorType",     "type": "string", "doc": "Exception class name of the final failure."},
+    {"name": "errorMessage",  "type": "string", "doc": "Human readable failure reason."},
+    {"name": "attempts",      "type": "int",    "doc": "How many processing attempts were made before giving up."},
+    {"name": "sourceTopic",   "type": "string", "doc": "Topic the failed record came from."},
+    {"name": "sourcePartition", "type": "int",  "doc": "Partition the failed record came from."},
+    {"name": "sourceOffset",  "type": "long",   "doc": "Offset of the failed record."},
+    {"name": "failedAt",      "type": {"type": "long", "logicalType": "timestamp-millis"},
+     "doc": "Wall-clock time the record was sent to the DLQ."}
+  ]
+}
