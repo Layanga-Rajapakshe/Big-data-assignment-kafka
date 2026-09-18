@@ -10,3 +10,5 @@ env/
 
 # demo run logs
 *.log
+
+docs/
